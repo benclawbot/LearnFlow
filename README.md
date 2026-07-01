@@ -4,6 +4,8 @@
 
 LearnFlow is a local MiniMax M3 powered learning app. It lets you enter any subject, expand a recursive topic tree, select the branches that matter, and generate a structured HTML research report that can be viewed in the app or printed to PDF.
 
+Live site: [https://learnflow-sigma.vercel.app](https://learnflow-sigma.vercel.app)
+
 The app is dependency-light on purpose: a native Node.js server/proxy, vanilla ES modules in the browser, and CSS for the app shell, report viewer, thumbnails, dark mode, and print layout.
 
 ## Screenshots
