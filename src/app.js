@@ -98,7 +98,6 @@ function shell(content) {
           <div><h1 class="brand-title">LearnFlow</h1><p class="brand-subtitle">Learn any subject, fast.</p></div>
         </div>
         <nav class="nav" aria-label="Main navigation">
-          ${navItem('home', 'Home', icons.home)}
           ${navItem('explore', 'Explore', icons.explore)}
           ${navItem('analyses', 'My Analyses', icons.doc)}
           ${navItem('library', 'Topics Library', icons.book)}
@@ -324,6 +323,7 @@ function renderAnalysesScreen() {
 }
 
 function renderLibraryScreen() {
+  state.library = loadStoredList(storageKeys.topics);
   const cards = state.library.length ? state.library.map((entry) => `
     <article class="library-card">
       <div>
@@ -360,7 +360,8 @@ function renderPlaceholder(name) {
   return shell(`${topbar(name, 'This section is reserved for the production workspace.')}<section class="card" style="margin-top:30px"><h2>${name}</h2><p class="status-line">The core requested Explore → Generate → Printable HTML flow is implemented.</p><button class="primary-btn" data-nav="explore">Return to Explore</button></section>`);
 }
 
-function render() {
+function render(options = {}) {
+  const treeScroll = options.preserveTreeScroll ? captureTreeScroll() : null;
   applyTheme();
   updateDocumentTitle();
   if (state.screen === 'explore') app.innerHTML = renderExploreScreen();
@@ -374,11 +375,35 @@ function render() {
   bindEvents();
   if (state.screen === 'explore' || state.fullscreenTree) {
     requestAnimationFrame(() => {
+      restoreTreeScroll(treeScroll);
       drawConnectors();
       if (state.fullscreenTree) drawConnectors('fullscreen');
     });
   }
   if (state.screen === 'report') bindReportScroll();
+}
+
+function captureTreeScroll() {
+  const main = app.querySelector('.explore-grid .tree-scroll:not(.fullscreen-tree-scroll)');
+  const fullscreen = app.querySelector('.fullscreen-tree-scroll');
+  return {
+    main: main ? { top: main.scrollTop, left: main.scrollLeft } : null,
+    fullscreen: fullscreen ? { top: fullscreen.scrollTop, left: fullscreen.scrollLeft } : null
+  };
+}
+
+function restoreTreeScroll(scrollState) {
+  if (!scrollState) return;
+  const main = app.querySelector('.explore-grid .tree-scroll:not(.fullscreen-tree-scroll)');
+  const fullscreen = app.querySelector('.fullscreen-tree-scroll');
+  if (main && scrollState.main) {
+    main.scrollTop = scrollState.main.top;
+    main.scrollLeft = scrollState.main.left;
+  }
+  if (fullscreen && scrollState.fullscreen) {
+    fullscreen.scrollTop = scrollState.fullscreen.top;
+    fullscreen.scrollLeft = scrollState.fullscreen.left;
+  }
 }
 
 function bindEvents() {
@@ -403,26 +428,30 @@ function bindEvents() {
     if (action === 'toggle-node') {
       event.stopPropagation();
       state.tree = toggleSelected(state.tree, el.dataset.nodeId);
-      render();
+      persistCurrentTopicTree();
+      render({ preserveTreeScroll: true });
     }
     if (action === 'remove-selected') {
       state.tree = toggleSelected(state.tree, el.dataset.nodeId, false);
-      render();
+      persistCurrentTopicTree();
+      render({ preserveTreeScroll: true });
     }
     if (action === 'clear-selected') {
       state.tree = clearSelected(state.tree);
-      render();
+      persistCurrentTopicTree();
+      render({ preserveTreeScroll: true });
     }
     if (action === 'select-tree') {
       state.tree = setAllSelected(state.tree, true);
+      persistCurrentTopicTree();
       state.message = 'Selected every topic currently in the tree.';
       state.error = '';
-      render();
+      render({ preserveTreeScroll: true });
     }
     if (action === 'toggle-theme') {
       state.theme = state.theme === 'dark' ? 'light' : 'dark';
       localStorage.setItem('learnflow-theme', state.theme);
-      render();
+      render({ preserveTreeScroll: true });
     }
     if (action === 'jump-report-section') {
       const target = document.getElementById(el.dataset.sectionId);
@@ -521,6 +550,11 @@ function saveTopicToLibrary(topic, tree) {
   saveStoredList(storageKeys.topics, state.library);
 }
 
+function persistCurrentTopicTree() {
+  if (!state.topic || !state.tree) return;
+  saveTopicToLibrary(state.topic, state.tree);
+}
+
 function saveAnalysisToLibrary({ title, topic, html, selectedItems }) {
   const entry = {
     id: makeEntryId(title || topic),
@@ -599,6 +633,9 @@ async function handleExploreTopic() {
   const input = app.querySelector('#topic-input');
   const topic = input?.value?.trim() || 'Artificial Intelligence';
   state.topic = topic;
+  const pendingRoot = makeNode(topic, '', 0, 'violet');
+  pendingRoot.expanded = true;
+  saveTopicToLibrary(topic, pendingRoot);
   state.loading = true;
   state.error = '';
   state.message = 'Generating a fresh subject map with MiniMax M3…';
@@ -631,23 +668,25 @@ async function handleExpandNode(nodeId) {
     const target = findNode(next, nodeId);
     target.expanded = !target.expanded;
     state.tree = next;
-    render();
+    persistCurrentTopicTree();
+    render({ preserveTreeScroll: true });
     return;
   }
   state.loading = true;
   state.error = '';
   state.message = `Expanding ${node.label} with MiniMax M3…`;
-  render();
+  render({ preserveTreeScroll: true });
   try {
     const result = await exploreTopic({ topic: node.label, depth: 1, parentPath: getNodePath(nodeId) });
     const children = (result.subjects || []).slice(0, 5).map((child, index) => makeNode(child.label || child, node.id, index, node.color || 'blue'));
     state.tree = setChildren(state.tree, nodeId, children);
+    persistCurrentTopicTree();
     state.message = `${node.label} expanded.`;
   } catch (error) {
     state.error = error.message;
   } finally {
     state.loading = false;
-    render();
+    render({ preserveTreeScroll: true });
   }
 }
 
@@ -655,7 +694,7 @@ async function handleExpandLevel(level) {
   state.loading = true;
   state.error = '';
   state.message = `Expanding every branch to level ${level}...`;
-  render();
+  render({ preserveTreeScroll: true });
   try {
     let nextTree = setExpandedToDepth(state.tree, level);
     for (let depth = 0; depth < level; depth += 1) {
@@ -663,7 +702,7 @@ async function handleExpandLevel(level) {
       for (const node of leaves) {
         state.tree = setExpandedToDepth(nextTree, level);
         state.message = `Loading branches for ${node.label}...`;
-        render();
+        render({ preserveTreeScroll: true });
         const result = await exploreTopic({ topic: node.label, depth: 1, parentPath: node.path });
         const children = makeChildrenFromSubjects(result.subjects || [], node);
         nextTree = setChildren(nextTree, node.id, children);
@@ -671,12 +710,13 @@ async function handleExpandLevel(level) {
       }
     }
     state.tree = setExpandedToDepth(nextTree, level);
+    persistCurrentTopicTree();
     state.message = `Expanded every branch to level ${level}.`;
   } catch (error) {
     state.error = error.message;
   } finally {
     state.loading = false;
-    render();
+    render({ preserveTreeScroll: true });
   }
 }
 
