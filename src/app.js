@@ -599,8 +599,8 @@ function stopProgressTimer() {
 
 function progressLabel(percent) {
   if (percent < 18) return 'Preparing selected topics...';
-  if (percent < 42) return 'Researching the selected branches with MiniMax M3...';
-  if (percent < 68) return 'Structuring sections, examples, and learning paths...';
+  if (percent < 42) return 'Collecting web research for each selected branch...';
+  if (percent < 68) return 'Writing source-grounded definitions and current details...';
   if (percent < 88) return 'Building the styled HTML preview...';
   return 'Final checks before opening the report...';
 }

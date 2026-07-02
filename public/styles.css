@@ -516,6 +516,7 @@ button { cursor: pointer; }
 .thumb-doc .summary-block { margin-top:30px; padding:16px; }
 .thumb-doc .grid-two { gap:10px; }
 .thumb-doc .note-card,
+.thumb-doc .research-card,
 .thumb-doc .takeaway,
 .thumb-doc .topic-path,
 .thumb-doc .tree-list { border-radius:8px; padding:10px; }
@@ -780,10 +781,17 @@ button { cursor: pointer; }
 .print-doc .tree-list { border:1px solid #e2e8f0; border-radius:14px; padding:18px 22px; background:#fbfdff; }
 .print-doc .tree-list ul { margin:6px 0 6px 22px; }
 .print-doc .takeaway { border:1px solid #dbe8ff; background:#f4f8ff; border-radius:14px; padding:18px; margin:22px 0; }
+.print-doc .research-card { border:1px solid #dbe8ff; background:#f4f8ff; border-radius:14px; padding:18px; margin:22px 0; }
+.print-doc .research-card h3 { margin-top:0; }
 .print-doc .grid-two { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
 .print-doc .note-card { border:1px solid #e5eaf3; background:#fff; border-radius:13px; padding:16px; }
+.print-doc .key-takeaways { margin: 26px 0 18px; }
 .print-doc ul { padding-left: 22px; }
 .print-doc li { margin: 7px 0; }
+.print-doc .source-list { padding-left: 22px; color:#475569; }
+.print-doc .source-list li { margin: 10px 0; }
+.print-doc .source-list a { display:block; color:#1f63e3; font-weight:800; text-decoration:none; }
+.print-doc .source-list span { display:block; margin-top:3px; font-size:13px; line-height:1.5; }
 .print-doc .footer-note { color:#667085; font-size:12px; margin-top:26px; }
 
 @media print {
@@ -817,6 +825,7 @@ button { cursor: pointer; }
     border-bottom:0;
   }
   .print-doc .note-card,
+  .print-doc .research-card,
   .print-doc .takeaway {
     break-inside: avoid;
     page-break-inside: avoid;

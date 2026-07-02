@@ -24,7 +24,7 @@ The app is dependency-light on purpose: a native Node.js server/proxy, vanilla E
 - A fullscreen subject-tree viewer for loaded branches.
 - Light and dark modes with a visible sun icon in light mode and moon icon in dark mode.
 - LearnFlow logo and favicon assets under `public/assets`.
-- Research HTML generation from selected tree items.
+- Research HTML generation from selected tree items, enriched with server-side web source snippets.
 - A progressive generation modal with realistic percent updates while reports are being created.
 - In-app report viewer with clickable thumbnails generated from the actual report sections.
 - Continuous print-friendly report HTML with no forced page breaks.
@@ -74,7 +74,7 @@ ${MINIMAX_BASE_URL}/chat/completions
 
 ## Report Flow
 
-Select topics in the tree, click `Generate Research HTML`, and LearnFlow opens the report viewer. The left rail shows previews generated from the actual report sections, and clicking a thumbnail jumps directly to that section. The `Print / Save as PDF` button opens the browser print dialog using a continuous HTML layout.
+Select topics in the tree, click `Generate Research HTML`, and LearnFlow opens the report viewer. Each selected section is written as a research brief with a simple definition, current details from collected web snippets, a longer overview, key takeaways, and sources consulted. The left rail shows previews generated from the actual report sections, and clicking a thumbnail jumps directly to that section. The `Print / Save as PDF` button opens the browser print dialog using a continuous HTML layout.
 
 Generated reports are saved locally in `My Analyses`. Searched topic trees are saved locally in `Topics Library`, where they can be reopened later. Both use browser localStorage, so they are per-browser and per-device.
 
@@ -104,7 +104,7 @@ VERCEL_PROJECT_ID
 
 ## Files
 
-`public/index.html` is the app shell. `public/styles.css` contains the full visual system, dark mode, report viewer, thumbnails, modals, and print styles. `src/app.js` orchestrates UI screens, local recall, and interactions. `src/tree.js` owns the recursive tree model. `src/report.js` creates the printable report HTML. `server/index.mjs` serves static files and API routes locally. `server/minimax.mjs` handles MiniMax prompts, requests, parsing, and fallbacks. `api/` contains the Vercel production function routes.
+`public/index.html` is the app shell. `public/styles.css` contains the full visual system, dark mode, report viewer, thumbnails, modals, and print styles. `src/app.js` orchestrates UI screens, local recall, and interactions. `src/tree.js` owns the recursive tree model. `src/report.js` creates the printable report HTML. `server/index.mjs` serves static files and API routes locally. `server/research.mjs` collects public source snippets for selected topics. `server/minimax.mjs` handles MiniMax prompts, requests, parsing, and fallbacks. `api/` contains the Vercel production function routes.
 
 ## Production Notes
 

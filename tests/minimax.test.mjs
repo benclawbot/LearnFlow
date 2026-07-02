@@ -10,11 +10,20 @@ test('MiniMax config defaults to requested base URL and model', () => {
 
 test('prompt builders require strict JSON for the recursive tree and analysis', () => {
   const explore = buildExploreMessages({ topic: 'Physics', parentPath: ['Physics'], depth: 2 });
-  const analyze = buildAnalyzeMessages({ topic: 'Physics', selectedItems: [{ label: 'Motion', path: ['Physics', 'Motion'] }] });
+  const analyze = buildAnalyzeMessages({
+    topic: 'Physics',
+    selectedItems: [{ label: 'Motion', path: ['Physics', 'Motion'] }],
+    researchPacks: [{ title: 'Motion', path: ['Physics', 'Motion'], sources: [{ title: 'Source', url: 'https://example.com', note: 'Current source note.' }] }]
+  });
   assert.match(explore[0].content, /Return only strict JSON/);
   assert.match(analyze[0].content, /Return only strict JSON/);
   assert.match(explore[1].content, /subjects/);
   assert.match(analyze[1].content, /sections/);
+  assert.match(analyze[1].content, /webResearch/);
+  assert.match(analyze[1].content, /simpleDefinition/);
+  assert.match(analyze[1].content, /currentDetails/);
+  assert.match(analyze[1].content, /researchOverview/);
+  assert.doesNotMatch(analyze[1].content, /nextSteps/);
 });
 
 test('extractJson accepts fenced JSON from model responses', () => {
@@ -59,7 +68,7 @@ test('analyzeWithMiniMax falls back when the model returns invalid JSON', async 
   const result = await analyzeWithMiniMax({
     topic: 'AI',
     selectedItems: [{ label: 'Machine Learning', path: ['AI', 'Machine Learning'] }]
-  }, { env: { MINIMAX_API_KEY: 'secret' }, fetchImpl: fakeFetch });
+  }, { env: { MINIMAX_API_KEY: 'secret' }, fetchImpl: fakeFetch, researchProvider: async () => [] });
   assert.equal(result.title, 'AI Research Brief');
   assert.equal(result.sections[0].title, 'Machine Learning');
 });

@@ -12,7 +12,7 @@
     "dev": "node server/index.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check server/index.mjs && node --check server/minimax.mjs && node --check api/explore.mjs && node --check api/analyze.mjs && node --check api/health.mjs && node --check src/app.js && node --check src/tree.js && node --check src/report.js && node --check scripts/build.mjs",
+    "check": "node --check server/index.mjs && node --check server/minimax.mjs && node --check server/research.mjs && node --check api/explore.mjs && node --check api/analyze.mjs && node --check api/health.mjs && node --check src/app.js && node --check src/tree.js && node --check src/report.js && node --check scripts/build.mjs",
     "smoke": "node tests/smoke-server.mjs"
   },
   "keywords": [

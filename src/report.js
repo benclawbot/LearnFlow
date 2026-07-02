@@ -14,9 +14,28 @@ function list(items = []) {
   return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
 }
 
+function sourceList(sources = []) {
+  if (!sources.length) return '<p class="footer-note">No source snippets were available for this section.</p>';
+  return `<ol class="source-list">${sources.map((source) => {
+    const url = safeUrl(source.url);
+    const label = source.title || source.url || 'Source';
+    const note = source.note ? `<span>${escapeHtml(source.note)}</span>` : '';
+    return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>${note}</li>`;
+  }).join('')}</ol>`;
+}
+
 function nestedTree(node) {
   if (!node?.children?.length) return '';
   return `<ul>${node.children.map((child) => `<li><strong>${escapeHtml(child.label)}</strong>${nestedTree(child)}</li>`).join('')}</ul>`;
+}
+
+function normalizeSources(sources = []) {
+  if (!Array.isArray(sources)) return [];
+  return sources.map((source) => ({
+    title: source?.title || source?.url || 'Source',
+    url: source?.url || '',
+    note: source?.note || ''
+  })).filter((source) => source.url || source.note);
 }
 
 export function normalizeAnalysisPayload(payload, selectedItems, options = {}) {
@@ -29,12 +48,12 @@ export function normalizeAnalysisPayload(payload, selectedItems, options = {}) {
     return {
       title: fallback.title || item.label,
       path: fallback.path || item.path,
-      overview: fallback.overview || `A focused explanation of ${item.label} in the context of ${item.path.join(' → ')}.`,
-      whyItMatters: fallback.whyItMatters || 'This topic matters because it helps structure understanding and reveal the next useful concepts to learn.',
+      simpleDefinition: fallback.simpleDefinition || fallback.definition || `A plain-language definition for ${item.label} was not provided by the analysis model.`,
+      currentDetails: fallback.currentDetails || fallback.currentState || fallback.whyItMatters || 'Current source-grounded details were not provided for this section.',
+      researchOverview: fallback.researchOverview || fallback.description || fallback.overview || `A focused explanation of ${item.label} in the context of ${item.path.join(' > ')}.`,
       keyTakeaways: fallback.keyTakeaways || [],
       examples: fallback.examples || [],
-      pitfalls: fallback.pitfalls || [],
-      nextSteps: fallback.nextSteps || []
+      sources: normalizeSources(fallback.sources)
     };
   });
   return { title, summary, sections: normalizedSections };
@@ -58,26 +77,22 @@ export function createPrintableReportHtml({ topic, selectedItems, analysis, opti
   const sections = normalized.sections.map((section, index) => `
     <section class="section-page report-section" id="report-section-${index + 1}">
       <h2>${index + 1}. ${escapeHtml(section.title)}</h2>
-      <div class="topic-path">${escapeHtml((section.path || []).join(' → '))}</div>
-      <h3>What it means</h3>
-      <p>${escapeHtml(section.overview)}</p>
-      <div class="takeaway">
-        <h4>Why it matters</h4>
-        <p>${escapeHtml(section.whyItMatters)}</p>
+      <div class="topic-path">${escapeHtml((section.path || []).join(' > '))}</div>
+      <h3>Simple definition</h3>
+      <p>${escapeHtml(section.simpleDefinition)}</p>
+      <div class="research-card">
+        <h3>Current details</h3>
+        <p>${escapeHtml(section.currentDetails)}</p>
       </div>
-      <div class="grid-two">
-        <div class="note-card">
-          <h4>Key takeaways</h4>
-          ${list(section.keyTakeaways)}
-        </div>
-        <div class="note-card">
-          <h4>Learning path</h4>
-          ${list(section.nextSteps)}
-        </div>
+      <h3>Research overview</h3>
+      <p>${escapeHtml(section.researchOverview)}</p>
+      ${includeExamples && section.examples?.length ? `<h3>Concrete examples</h3>${list(section.examples)}` : ''}
+      <div class="note-card key-takeaways">
+        <h4>Key takeaways</h4>
+        ${list(section.keyTakeaways)}
       </div>
-      ${includeExamples ? `<h3>Examples</h3>${list(section.examples)}` : ''}
-      <h3>Common traps</h3>
-      ${list(section.pitfalls)}
+      <h3>Sources consulted</h3>
+      ${sourceList(section.sources)}
     </section>`).join('');
 
   return `
@@ -88,7 +103,7 @@ export function createPrintableReportHtml({ topic, selectedItems, analysis, opti
           <h2>Summary</h2>
           <p>${escapeHtml(normalized.summary)}</p>
         </div>
-        <p class="meta">Generated ${escapeHtml(created)} · ${escapeHtml(depth)} depth · ${escapeHtml(audience)} audience · ${selectedItems.length} selected topics</p>
+        <p class="meta">Generated ${escapeHtml(created)} - ${escapeHtml(depth)} depth - ${escapeHtml(audience)} audience - ${selectedItems.length} selected topics</p>
       </section>
       <section class="toc-page report-section" id="report-toc">
         <h2>Table of Contents</h2>
@@ -112,4 +127,10 @@ export function createReportDownload(reportHtml, title = 'LearnFlow Analysis', s
   const styleTag = styles ? `<style>${styles}</style>` : '<link rel="stylesheet" href="styles.css">';
   const fullDocument = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(safeTitle)}</title>${styleTag}</head><body>${reportHtml}</body></html>`;
   return { filename: `${safeTitle}.html`, content: fullDocument };
+}
+
+function safeUrl(url) {
+  const value = String(url || '').trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  return '#';
 }

@@ -17,6 +17,7 @@ const required = [
   'api/health.mjs',
   'server/index.mjs',
   'server/minimax.mjs',
+  'server/research.mjs',
   'package.json',
   '.env.example',
   'README.md'

@@ -30,8 +30,44 @@ test('createPrintableReportHtml includes table of contents and selected subject 
   assert.match(html, /id="report-section-1"/);
   assert.match(html, /Machine Learning/);
   assert.match(html, /Supervised Learning/);
+  assert.match(html, /Simple definition/);
+  assert.match(html, /Current details/);
+  assert.match(html, /Research overview/);
+  assert.doesNotMatch(html, /Learning path/);
+  assert.doesNotMatch(html, /Common traps/);
   assert.doesNotMatch(html, /Comprehensive Learning Analysis/);
   assert.doesNotMatch(html, /class="report-logo"/);
+});
+
+test('createPrintableReportHtml renders source-grounded section details', () => {
+  const selectedItems = [{ label: 'Agent Architecture', path: ['AI Agents', 'Agent Architecture'] }];
+  const html = createPrintableReportHtml({
+    topic: 'AI Agents',
+    selectedItems,
+    analysis: {
+      title: 'AI Agents Research Brief',
+      summary: 'A source-grounded summary.',
+      sections: [
+        {
+          title: 'Agent Architecture',
+          path: ['AI Agents', 'Agent Architecture'],
+          simpleDefinition: 'Agent architecture is the design of components that let an AI agent perceive, plan, use tools, and act.',
+          currentDetails: 'Current sources emphasize planning loops, memory, tool-use, evaluation, and orchestration.',
+          researchOverview: 'Recent agent systems combine model calls with retrieval, tool execution, memory, monitoring, and task decomposition.',
+          keyTakeaways: ['Ground each claim in sources.', 'Separate planning, memory, and action components.'],
+          sources: [{ title: 'Agent systems paper', url: 'https://example.com/paper', note: 'Discusses agent planning and tool use.' }]
+        }
+      ]
+    },
+    options: { includeExamples: true }
+  });
+
+  assert.match(html, /Agent architecture is the design/);
+  assert.match(html, /Current sources emphasize planning loops/);
+  assert.match(html, /Recent agent systems combine model calls/);
+  assert.match(html, /Sources consulted/);
+  assert.match(html, /https:\/\/example\.com\/paper/);
+  assert.doesNotMatch(html, /Learning path/);
 });
 
 test('createReportDownload embeds styles and keeps filenames readable', () => {

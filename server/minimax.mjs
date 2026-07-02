@@ -1,3 +1,5 @@
+import { collectResearchPacks } from './research.mjs';
+
 const DEFAULT_BASE_URL = 'https://api.minimax.io/v1';
 const DEFAULT_MODEL = 'MiniMax-M3';
 
@@ -114,38 +116,51 @@ export function buildExploreMessages({ topic, parentPath = [], depth = 1 }) {
   ];
 }
 
-export function buildAnalyzeMessages({ topic, selectedItems, options = {} }) {
+export function buildAnalyzeMessages({ topic, selectedItems, options = {}, researchPacks = [] }) {
+  const currentDate = new Date().toISOString().slice(0, 10);
   return [
     {
       role: 'system',
-      content: 'You are a precise learning analyst. Return only strict JSON. Do not return HTML, markdown, or prose outside JSON. The application will create the final printable HTML.'
+      content: 'You are a precise web research analyst. Return only strict JSON. Do not return HTML, markdown, citations in prose, or prose outside JSON. Use the supplied web research snippets as your source material and be explicit when source coverage is sparse.'
     },
     {
       role: 'user',
       content: JSON.stringify({
-        task: 'Create a detailed learning analysis for selected levels in a recursive subject tree.',
+        task: 'Create a source-grounded research brief for selected subjects in a recursive topic tree.',
+        currentDate,
         topic,
         selectedItems,
         options,
+        webResearch: researchPacks,
         schema: {
           title: 'Report title',
-          summary: 'One paragraph summary of the selected learning scope',
+          summary: 'One paragraph source-grounded summary of the selected research scope',
           sections: [
             {
               title: 'Selected topic label',
               path: ['Root', 'Branch', 'Selected topic'],
-              overview: 'Clear explanation in 120-180 words',
-              whyItMatters: 'Practical importance in 60-100 words',
-              keyTakeaways: ['5 concise takeaways'],
-              examples: ['3 concrete examples'],
-              pitfalls: ['3 common misunderstandings'],
-              nextSteps: ['3 suggested next learning steps']
+              simpleDefinition: 'Plain-language definition in 1 to 2 sentences',
+              currentDetails: 'What current public web sources say, including concrete details and uncertainty where needed, in 100 to 160 words',
+              researchOverview: 'Longer source-grounded explanation in 180 to 280 words',
+              keyTakeaways: ['4 to 6 source-grounded takeaways'],
+              examples: ['2 to 3 concrete examples when useful'],
+              sources: [
+                {
+                  title: 'Source title',
+                  url: 'Source URL',
+                  note: 'Short note on what this source contributed'
+                }
+              ]
             }
           ]
         },
         requirements: [
           'Create exactly one section per selected item.',
           'Preserve the selected item paths exactly.',
+          'Use the webResearch sources that match each selected item; keep source URLs exactly as supplied.',
+          'When source snippets are sparse, say what is known from the available snippets and what remains uncertain instead of inventing facts.',
+          'Do not include a learning path, exercises, study instructions, or next learning steps.',
+          'Avoid generic phrases such as "part of the broader learning map" or "turns a broad subject into a concrete learning target".',
           'Use the requested language if provided.',
           'Adapt explanation depth to the requested audience and depth.',
           'Do not use ellipses, placeholders, comments, markdown, or omitted sections.',
@@ -165,49 +180,54 @@ export async function exploreWithMiniMax(payload, options) {
 
 export async function analyzeWithMiniMax(payload, options) {
   let result;
+  const researchProvider = options?.researchProvider || collectResearchPacks;
+  const researchPacks = await researchProvider(payload, options).catch(() => []);
+  const enrichedPayload = { ...payload, researchPacks };
   try {
-    result = await callMiniMaxJson({ messages: buildAnalyzeMessages(payload), temperature: 0.35, maxTokens: 9000 }, options);
+    result = await callMiniMaxJson({ messages: buildAnalyzeMessages(enrichedPayload), temperature: 0.3, maxTokens: 12000 }, options);
   } catch (error) {
     if (!/valid JSON|Unexpected token/i.test(error.message || '')) throw error;
-    return buildFallbackAnalysis(payload);
+    return buildFallbackAnalysis(enrichedPayload);
   }
   if (!Array.isArray(result.sections)) throw new Error('MiniMax analysis response did not include a sections array.');
   return result;
 }
 
-function buildFallbackAnalysis({ topic = 'Learning Topic', selectedItems = [], options = {} }) {
+function buildFallbackAnalysis({ topic = 'Learning Topic', selectedItems = [], options = {}, researchPacks = [] }) {
   const depth = options.depth || 'Detailed';
   const audience = options.audience || 'Intermediate';
+  const sourceMap = new Map(researchPacks.map((pack) => [researchKey(pack), pack]));
   return {
     title: `${topic} Research Brief`,
-    summary: `A structured ${depth.toLowerCase()} research brief for ${audience.toLowerCase()} learners, generated from the selected LearnFlow topic tree.`,
-    sections: selectedItems.map((item) => ({
-      title: item.label,
-      path: item.path,
-      overview: `${item.label} is part of the broader ${item.path[0] || topic} learning map. Study it by connecting the concept to its parent topics, identifying the core vocabulary, and mapping where it appears in real systems or workflows.`,
-      whyItMatters: `${item.label} matters because it turns a broad subject into a concrete learning target. It gives the learner a smaller unit to investigate, compare, practice, and eventually connect back to the larger subject tree.`,
-      keyTakeaways: [
-        `Define ${item.label} in plain language.`,
-        `Connect ${item.label} to ${item.path.slice(0, -1).join(' > ') || topic}.`,
-        'Identify the inputs, outputs, and decisions involved.',
-        'Look for one practical example and one counterexample.',
-        'Use the topic path to decide what to learn next.'
-      ],
-      examples: [
-        `A concept map showing where ${item.label} sits in the selected tree.`,
-        `A short comparison between ${item.label} and a sibling topic.`,
-        `A real-world scenario where ${item.label} affects an outcome.`
-      ],
-      pitfalls: [
-        'Learning the label without understanding its parent context.',
-        'Treating related sibling topics as interchangeable.',
-        'Skipping examples before moving to more advanced branches.'
-      ],
-      nextSteps: [
-        `Write a one-paragraph explanation of ${item.label}.`,
-        'Find a worked example and annotate the important steps.',
-        'Expand the tree one level deeper and compare the new branches.'
-      ]
-    }))
+    summary: `A ${depth.toLowerCase()} source-grounded research brief for ${audience.toLowerCase()} readers, based on the selected LearnFlow topics and any web snippets available during generation.`,
+    sections: selectedItems.map((item) => {
+      const pack = sourceMap.get(researchKey(item)) || { sources: [] };
+      const sourceNotes = pack.sources.map((source) => source.note).filter(Boolean);
+      const sourceSummary = sourceNotes.length ? sourceNotes.slice(0, 3).join(' ') : `No external source snippets were available for ${item.label} during this generation.`;
+      return {
+        title: item.label,
+        path: item.path,
+        simpleDefinition: `${item.label} is a subject area within ${item.path?.slice(0, -1).join(' > ') || topic}.`,
+        currentDetails: sourceSummary,
+        researchOverview: sourceNotes.length
+          ? `${item.label} is best understood through the available source evidence rather than the tree label alone. The collected references describe the concept this way: ${sourceSummary}`
+          : `${item.label} could not be enriched with live source snippets in this run, so the report preserves the selected topic context without adding unsupported current claims.`,
+        keyTakeaways: sourceNotes.length
+          ? pack.sources.slice(0, 5).map((source) => `${source.title}: ${source.note}`)
+          : [
+              'No external source snippet was available for this topic in the generation run.',
+              'Treat this section as a placeholder until a source-backed regeneration succeeds.',
+              'Avoid relying on generic learning-map text for factual detail.'
+            ],
+        examples: [],
+        sources: pack.sources || []
+      };
+    })
   };
+}
+
+function researchKey(value) {
+  const label = String(value?.title || value?.label || '').toLowerCase();
+  const path = Array.isArray(value?.path) ? value.path.join(' > ').toLowerCase() : '';
+  return `${label}|${path}`;
 }
