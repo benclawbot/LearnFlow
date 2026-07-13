@@ -4,6 +4,15 @@ import { createReadStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exploreWithMiniMax, analyzeWithMiniMax } from './minimax.mjs';
+import {
+  applySecurityHeaders,
+  enforceRateLimit,
+  getClientKey,
+  readJsonBody,
+  toHttpError,
+  validateAnalyzeBody,
+  validateExploreBody
+} from './security.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -20,34 +29,47 @@ const mimeTypes = new Map([
   ['.mjs', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
   ['.svg', 'image/svg+xml'],
-  ['.png', 'image/png']
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp']
 ]);
 
 export function createServer() {
   return http.createServer(async (request, response) => {
+    applySecurityHeaders(response, String(request.headers.origin || ''));
     try {
       if (request.method === 'OPTIONS') return sendJson(response, 204, {});
       if (request.url === '/health') return sendJson(response, 200, { ok: true, app: 'LearnFlow', model: process.env.MINIMAX_MODEL || 'MiniMax-M3' });
+
+      if (request.url?.startsWith('/api/')) {
+        const rate = enforceRateLimit(getClientKey(request), {
+          limit: Number(process.env.RATE_LIMIT_PER_MINUTE || 30)
+        });
+        response.setHeader('X-RateLimit-Remaining', String(rate.remaining));
+        response.setHeader('X-RateLimit-Reset', String(Math.ceil(rate.resetAt / 1000)));
+        if (!rate.allowed) return sendJson(response, 429, { error: 'Too many requests. Please try again shortly.' });
+      }
+
       if (request.method === 'POST' && request.url === '/api/explore') return await handleExplore(request, response);
       if (request.method === 'POST' && request.url === '/api/analyze') return await handleAnalyze(request, response);
       if (request.method === 'GET') return serveStatic(request, response);
       sendJson(response, 405, { error: 'Method not allowed' });
     } catch (error) {
-      sendJson(response, 500, { error: error.message || 'Unexpected server error' });
+      const failure = toHttpError(error);
+      sendJson(response, failure.status, { error: failure.message });
     }
   });
 }
 
 async function handleExplore(request, response) {
-  const body = await readJsonBody(request);
-  if (!body.topic || typeof body.topic !== 'string') return sendJson(response, 400, { error: 'topic is required' });
+  const body = validateExploreBody(await readJsonBody(request));
   const result = await exploreWithMiniMax(body);
   sendJson(response, 200, result);
 }
 
 async function handleAnalyze(request, response) {
-  const body = await readJsonBody(request);
-  if (!Array.isArray(body.selectedItems) || body.selectedItems.length === 0) return sendJson(response, 400, { error: 'selectedItems is required' });
+  const body = validateAnalyzeBody(await readJsonBody(request));
   const result = await analyzeWithMiniMax(body);
   sendJson(response, 200, result);
 }
@@ -69,27 +91,15 @@ async function serveStatic(request, response) {
   }
 
   const ext = path.extname(normalized);
+  response.setHeader('Cache-Control', rawPath === '/' ? 'no-cache' : 'public, max-age=3600');
   response.writeHead(200, { 'Content-Type': mimeTypes.get(ext) || 'application/octet-stream' });
   createReadStream(normalized).pipe(response);
 }
 
 function sendJson(response, status, payload) {
-  response.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-  });
+  if (!response.headersSent) response.setHeader('Content-Type', 'application/json; charset=utf-8');
+  response.statusCode = status;
   response.end(status === 204 ? '' : JSON.stringify(payload));
-}
-
-async function readJsonBody(request) {
-  const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
-  const raw = Buffer.concat(chunks).toString('utf8');
-  if (!raw) return {};
-  try { return JSON.parse(raw); }
-  catch { throw new Error('Request body must be valid JSON.'); }
 }
 
 async function loadDotEnv(filePath) {
