@@ -1,407 +1,52 @@
-import { collectResearchPacks } from './research.mjs';
+import { collectDossierResearch } from './research.mjs';
+const BASE='https://api.minimax.io/v1',MODEL='MiniMax-M3';
+const DEPTH={Quick:{chapters:4,sections:'2 to 3',words:'350 to 550',chapterTokens:4200,finalTokens:4500},Detailed:{chapters:6,sections:'3 to 5',words:'700 to 1100',chapterTokens:7000,finalTokens:6500},Expert:{chapters:8,sections:'4 to 7',words:'1000 to 1600',chapterTokens:9000,finalTokens:8000}};
 
-const DEFAULT_BASE_URL = 'https://api.minimax.io/v1';
-const DEFAULT_MODEL = 'MiniMax-M3';
+export const getMiniMaxConfig=(env=process.env)=>({apiKey:env.MINIMAX_API_KEY||'',baseUrl:(env.MINIMAX_BASE_URL||BASE).replace(/\/+$/,''),model:env.MINIMAX_MODEL||MODEL});
+export function extractJson(text){if(!text||typeof text!=='string')throw new Error('MiniMax returned an empty response.');const raw=text.replace(/<think>[\s\S]*?(?:<\/think>|$)\s*/gi,'').trim(),f=raw.match(/```(?:json)?\s*([\s\S]*?)```/i),candidate=(f?f[1]:raw).trim();const parse=v=>{try{return JSON.parse(v);}catch{const clean=v.replace(/^\s*\.{3}\s*,?\s*$/gm,'').replace(/,\s*([}\]])/g,'$1');if(clean!==v)return JSON.parse(clean);throw new Error('MiniMax response was not valid JSON.');}};try{return parse(candidate);}catch{const a=candidate.indexOf('{'),b=candidate.lastIndexOf('}');if(a>=0&&b>a)return parse(candidate.slice(a,b+1));throw new Error('MiniMax response was not valid JSON.');}}
+const responseText=p=>{const c=p?.choices?.[0]?.message?.content;return typeof c==='string'?c:Array.isArray(c)?c.map(x=>typeof x==='string'?x:x?.text||'').join('\n'):'';};
+export async function callMiniMaxJson({messages,temperature=.35,maxTokens=4096,thinking=false},options={}){const env=options.env||process.env,fetchImpl=options.fetchImpl||globalThis.fetch,cfg=getMiniMaxConfig(env);if(!cfg.apiKey)throw new Error('MINIMAX_API_KEY is missing. Add it to your .env before using live MiniMax M3 generation.');if(!fetchImpl)throw new Error('Fetch is not available in this Node.js runtime.');const r=await fetchImpl(`${cfg.baseUrl}/chat/completions`,{method:'POST',headers:{Authorization:`Bearer ${cfg.apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model:cfg.model,thinking:{type:thinking?'enabled':'disabled'},messages,temperature,max_tokens:maxTokens,stream:false})}),raw=await r.text();let p={};try{p=raw?JSON.parse(raw):{};}catch{p={raw};}if(!r.ok)throw new Error(p?.error?.message||p?.base_resp?.status_msg||raw||`MiniMax request failed with status ${r.status}`);return extractJson(responseText(p));}
 
-export function getMiniMaxConfig(env = process.env) {
-  return {
-    apiKey: env.MINIMAX_API_KEY || '',
-    baseUrl: (env.MINIMAX_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-    model: env.MINIMAX_MODEL || DEFAULT_MODEL
-  };
-}
+export function buildExploreMessages({topic,parentPath=[],depth=1}){return[{role:'system',content:'You are an expert curriculum cartographer. Return only strict JSON. Do not include markdown. Keep labels concise and useful for a recursive subject-learning tree.'},{role:'user',content:JSON.stringify({task:'Generate related subjects for a recursive learning tree.',topic,parentPath,depth,schema:{subjects:[{label:'Concise subject name',children:['Optional concise sub subject names when depth is greater than 1']}]},requirements:['Return 4 to 6 subjects at the current level.','For depth greater than 1, include 2 to 4 children per subject.','Avoid duplicates and overly broad siblings.','Keep every label under 36 characters.','Return JSON object exactly with key subjects.']})}];}
 
-export function extractJson(text) {
-  if (!text || typeof text !== 'string') throw new Error('MiniMax returned an empty response.');
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1].trim() : trimmed;
-  const parseCandidate = (value) => {
-    try {
-      return JSON.parse(value);
-    } catch {
-      const withoutPlaceholders = value
-        .replace(/^\s*\.{3}\s*,?\s*$/gm, '')
-        .replace(/,\s*([}\]])/g, '$1');
-      if (withoutPlaceholders !== value) return JSON.parse(withoutPlaceholders);
-      throw new Error('MiniMax response was not valid JSON.');
-    }
-  };
-  try {
-    return parseCandidate(candidate);
-  } catch {
-    const first = candidate.indexOf('{');
-    const last = candidate.lastIndexOf('}');
-    if (first >= 0 && last > first) return parseCandidate(candidate.slice(first, last + 1));
-    throw new Error('MiniMax response was not valid JSON.');
-  }
-}
+export function buildResearchPlanMessages({topic,selectedItems=[],options={}}){const cfg=DEPTH[options.depth]||DEPTH.Detailed;return[{role:'system',content:'You are a senior research director. Return strict JSON only. Design an investigation, not a curriculum and not one section per mind-map node. The selected tree is scope and context; combine related nodes into a small number of coherent research chapters.'},{role:'user',content:JSON.stringify({task:'Plan one deep research dossier around the central topic.',topic,selectedTreeScope:selectedItems,audience:options.audience||'Intermediate',depth:options.depth||'Detailed',requestedLanguage:options.language||'English',schema:{centralQuestion:'The main question the dossier must answer',scopeSummary:'What is and is not being investigated',thesisAngles:['Cross-cutting analytical angles'],chapters:[{id:'chapter-1',title:'Meaningful research chapter',purpose:'What this chapter must establish',selectedTopics:['Related tree labels combined into the chapter'],questions:['Specific research questions'],queries:['Specific technical, official, academic, or primary-source searches']}]},requirements:[`Create at most ${cfg.chapters} chapters.`,'Combine parent and child nodes; never create one chapter for every selected node.','Cover mechanisms, workflows, architecture, tradeoffs, limitations, practical implications, and comparisons.','Include a synthesis-oriented chapter when useful.','Do not include sources, citations, report prose, or markdown.','Return JSON with centralQuestion, scopeSummary, thesisAngles, and chapters only.']})}];}
 
-function responseText(payload) {
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => typeof part === 'string' ? part : part?.text || '').join('\n');
-  }
-  return '';
-}
+export function buildChapterMessages({topic,chapter,evidencePack,options={}}){const cfg=DEPTH[options.depth]||DEPTH.Detailed,ids=(evidencePack?.sources||[]).map(s=>s.id);return[{role:'system',content:'You are a senior analyst writing one chapter of a deep research dossier. Return strict JSON only. Write plain text, not markdown or HTML. Use evidence for named, current, quantitative, comparative, or case-specific claims. Stable expert knowledge may explain established concepts. Never mention sources, searches, evidence coverage, URLs, citations, or source IDs in prose.'},{role:'user',content:JSON.stringify({task:'Write a substantial self-contained research chapter.',topic,chapter,audience:options.audience||'Intermediate',depth:options.depth||'Detailed',includeExamples:options.includeExamples!==false,internalEvidence:evidencePack||{sources:[]},allowedSourceIds:ids,schema:{id:chapter.id,title:chapter.title,thesis:'Precise chapter argument',opening:['Two or three orienting paragraphs'],sections:[{heading:'Analytical subsection',paragraphs:['Detailed paragraphs explaining causal mechanisms, process, architecture, evidence, tradeoffs, failure modes, and implications'],takeaways:['Specific conclusions'],sourceIds:['Internal IDs only']}],comparisonTable:{title:'Optional comparison',columns:['Dimension','Option A','Option B'],rows:[['Row','Comparison','Comparison']],sourceIds:['Internal IDs only']},practicalImplications:['Concrete implications or actions'],limitations:['Important limitations and boundary conditions'],sourceIds:['Union of internal IDs used']},requirements:[`Write approximately ${cfg.words} words.`,`Use ${cfg.sections} analytical subsections.`,'Synthesize evidence instead of summarizing sources one by one.','Prioritize causal mechanisms, workflow details, architecture, tradeoffs, and failure modes.','Do not repeat points across fields.','Return null for comparisonTable unless comparison genuinely helps.','Do not expose sources, citations, publishers, URLs, IDs, confidence, or evidence coverage in prose.','Use only allowed source IDs in sourceIds fields.']})}];}
 
-export async function callMiniMaxJson({ messages, temperature = 0.35, maxTokens = 4096 }, options = {}) {
-  const env = options.env || process.env;
-  const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const config = getMiniMaxConfig(env);
-  if (!config.apiKey) {
-    throw new Error('MINIMAX_API_KEY is missing. Add it to your .env before using live MiniMax M3 generation.');
-  }
-  if (!fetchImpl) throw new Error('Fetch is not available in this Node.js runtime. Use Node 18 or newer.');
+export function buildDossierSynthesisMessages({topic,selectedItems=[],options={},researchPlan={},chapterDrafts=[]}){return[{role:'system',content:'You are the editor of a high-quality research dossier. Return strict JSON only. Create a coherent answer-first narrative from the chapters. Plain text only, with no markdown, HTML, citations, URLs, source names, source IDs, scores, or research-process commentary.'},{role:'user',content:JSON.stringify({task:'Create the front matter and closing synthesis for one integrated deep research dossier.',topic,selectedTreeScope:selectedItems,audience:options.audience||'Intermediate',depth:options.depth||'Detailed',requestedLanguage:options.language||'English',researchPlan,chapterDrafts:chapterDrafts.map(compactChapter),schema:{title:'Specific dossier title',subtitle:'One-line dossier question or value',executiveSummary:['Three to six substantial answer-first paragraphs'],keyFindings:[{title:'Concise finding',explanation:'Why it matters'}],conclusion:['Cross-chapter synthesis paragraphs'],recommendations:['Specific prioritized recommendations or decision principles'],openQuestions:['Important unresolved questions']},requirements:['Lead with the answer.','Synthesize patterns, tensions, dependencies, and tradeoffs across chapters.','Do not list every selected node.','Do not mention sources, citations, coverage, or research process.','Use the requested language throughout.']})}];}
+export const buildAnalyzeMessages=buildDossierSynthesisMessages;
 
-  const endpoint = `${config.baseUrl}/chat/completions`;
-  const response = await fetchImpl(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-      stream: false
-    })
-  });
+export async function exploreWithMiniMax(payload,options){const r=await callMiniMaxJson({messages:buildExploreMessages(payload),temperature:.25,maxTokens:2500,thinking:false},options);if(!Array.isArray(r.subjects))throw new Error('MiniMax explore response did not include a subjects array.');return r;}
 
-  const raw = await response.text();
-  let payload = {};
-  try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { raw }; }
+export async function analyzeWithMiniMax(payload,options={}){const depth=payload?.options?.depth||'Detailed',cfg=DEPTH[depth]||DEPTH.Detailed,provider=options.researchProvider||collectDossierResearch;let plan;try{plan=normalizeResearchPlan(await callMiniMaxJson({messages:buildResearchPlanMessages(payload),temperature:.18,maxTokens:5000,thinking:true},options),payload);}catch{plan=buildFallbackResearchPlan(payload);}let research;try{research=await provider({...payload,researchPlan:plan},options);}catch{research={overview:{sources:[]},chapters:[]};}research=normalizeResearch(research,plan);const chapters=await mapConcurrent(plan.chapters,options.chapterConcurrency||2,async(chapter,index)=>{const evidence=research.chapters[index]||{id:chapter.id,title:chapter.title,sources:[]};try{let draft=await callMiniMaxJson({messages:buildChapterMessages({topic:payload.topic,chapter,evidencePack:evidence,options:payload.options}),temperature:.2,maxTokens:cfg.chapterTokens,thinking:true},options),valid=validateChapterResult(draft,{chapter,evidencePack:evidence,depth});if(!valid.valid){draft=await repairChapter(draft,valid.errors,{payload,chapter,evidence,cfg,options});valid=validateChapterResult(draft,{chapter,evidencePack:evidence,depth});}return valid.valid?normalizeChapter(draft,{chapter,evidence}):fallbackChapter(payload.topic,chapter,evidence,payload.options);}catch{return fallbackChapter(payload.topic,chapter,evidence,payload.options);}});let synthesis;try{synthesis=await callMiniMaxJson({messages:buildDossierSynthesisMessages({...payload,researchPlan:plan,chapterDrafts:chapters}),temperature:.18,maxTokens:cfg.finalTokens,thinking:true},options);}catch{synthesis=fallbackSynthesis(payload.topic,plan,chapters);}const assembled={...synthesis,researchQuestion:plan.centralQuestion,scopeSummary:plan.scopeSummary,chapters},valid=validateAnalysisResult(assembled,{researchPlan:plan});return normalizeAnalysisResult(valid.valid?assembled:{...fallbackSynthesis(payload.topic,plan,chapters),researchQuestion:plan.centralQuestion,scopeSummary:plan.scopeSummary,chapters},{topic:payload.topic,researchPlan:plan});}
 
-  if (!response.ok) {
-    const message = payload?.error?.message || payload?.base_resp?.status_msg || raw || `MiniMax request failed with status ${response.status}`;
-    throw new Error(message);
-  }
+async function repairChapter(draft,errors,{payload,chapter,evidence,cfg,options}){return callMiniMaxJson({messages:[...buildChapterMessages({topic:payload.topic,chapter,evidencePack:evidence,options:payload.options}),{role:'assistant',content:JSON.stringify(draft)},{role:'user',content:JSON.stringify({task:'Repair the chapter JSON without shortening the substantive analysis.',validationErrors:errors,requirements:['Return complete corrected JSON only.','Keep plain text and remove citations or markup.','Use only allowed source IDs.','Preserve depth and eliminate repetition.']})}],temperature:.1,maxTokens:cfg.chapterTokens,thinking:true},options);}
 
-  return extractJson(responseText(payload));
-}
+export function validateChapterResult(result,{chapter={},evidencePack={},depth='Detailed'}={}){const errors=[];if(!result||typeof result!=='object')return{valid:false,errors:['Chapter must be an object.']};if(key(result.id)!==key(chapter.id))errors.push('Chapter id changed.');if(key(result.title)!==key(chapter.title))errors.push('Chapter title changed.');if(!Array.isArray(result.sections)||!result.sections.length)errors.push('Chapter sections must be a non-empty array.');const prose=[result.title,result.thesis,...arr(result.opening),...arr(result.practicalImplications),...arr(result.limitations)];for(const s of arr(result.sections))prose.push(s?.heading,...arr(s?.paragraphs),...arr(s?.takeaways));if(result.comparisonTable)prose.push(result.comparisonTable.title,...arr(result.comparisonTable.columns),...arr(result.comparisonTable.rows).flatMap(arr));if(prose.some(markup))errors.push('Chapter contains HTML, markdown, links, or citation-like markup.');const allowed=new Set((evidencePack.sources||[]).map(s=>s.id));for(const sourceId of sourceIds(result))if(!allowed.has(sourceId))errors.push(`Chapter contains unknown source ID ${sourceId}.`);const min=depth==='Expert'?3:depth==='Quick'?1:2;if(arr(result.sections).length<min)errors.push(`Chapter requires at least ${min} analytical sections.`);const paragraphCount=arr(result.opening).length+arr(result.sections).reduce((n,s)=>n+arr(s?.paragraphs).length,0);if(paragraphCount<(depth==='Quick'?3:5))errors.push('Chapter is too shallow.');return{valid:!errors.length,errors};}
+export function validateAnalysisResult(result,{researchPlan={}}={}){const errors=[];if(!result||typeof result!=='object')return{valid:false,errors:['Response must be an object.']};if(!Array.isArray(result.chapters))errors.push('chapters must be an array.');if(markup(result.title)||markup(result.subtitle))errors.push('Title and subtitle must be plain text.');for(const value of [...arr(result.executiveSummary),...arr(result.conclusion),...arr(result.recommendations),...arr(result.openQuestions)])if(markup(value))errors.push('Dossier contains markup.');if(Array.isArray(result.chapters)&&Array.isArray(researchPlan.chapters)){if(result.chapters.length!==researchPlan.chapters.length)errors.push('Chapter count changed.');researchPlan.chapters.forEach((chapter,index)=>{if(key(result.chapters?.[index]?.id)!==key(chapter.id))errors.push(`Chapter ${index+1} id changed.`);});}return{valid:!errors.length,errors};}
 
-export function buildExploreMessages({ topic, parentPath = [], depth = 1 }) {
-  return [
-    {
-      role: 'system',
-      content: 'You are an expert curriculum cartographer. Return only strict JSON. Do not include markdown. Keep labels concise and useful for a recursive subject-learning tree.'
-    },
-    {
-      role: 'user',
-      content: JSON.stringify({
-        task: 'Generate related subjects for a recursive learning tree.',
-        topic,
-        parentPath,
-        depth,
-        schema: {
-          subjects: [
-            {
-              label: 'Concise subject name',
-              children: ['Optional concise sub subject names when depth is greater than 1']
-            }
-          ]
-        },
-        requirements: [
-          'Return 4 to 6 subjects at the current level.',
-          'For depth greater than 1, include 2 to 4 children per subject.',
-          'Avoid duplicates and avoid overly broad siblings.',
-          'Keep every label under 36 characters.',
-          'Return JSON object exactly with key subjects.'
-        ]
-      })
-    }
-  ];
-}
+export function normalizeAnalysisResult(result,{topic='Learning Topic',researchPlan={}}={}){return{title:plain(result.title||`${topic} Research Dossier`),subtitle:plain(result.subtitle||researchPlan.centralQuestion||''),researchQuestion:plain(result.researchQuestion||researchPlan.centralQuestion||topic),scopeSummary:plain(result.scopeSummary||researchPlan.scopeSummary||''),executiveSummary:paragraphs(result.executiveSummary),keyFindings:arr(result.keyFindings).map(finding=>({title:plain(finding?.title||''),explanation:plain(finding?.explanation||finding||'')})).filter(finding=>finding.title||finding.explanation),chapters:arr(result.chapters).map(clientChapter),conclusion:paragraphs(result.conclusion),recommendations:list(result.recommendations,12),openQuestions:list(result.openQuestions,12)};}
+export function normalizeResearchPlan(plan,{topic='Learning Topic',selectedItems=[],options={}}={}){const fallback=buildFallbackResearchPlan({topic,selectedItems,options}),max=(DEPTH[options.depth]||DEPTH.Detailed).chapters,chapters=arr(plan?.chapters).slice(0,max).map((chapter,index)=>({id:id(chapter?.id||`chapter-${index+1}`),title:plain(chapter?.title||fallback.chapters[index]?.title||`Chapter ${index+1}`),purpose:plain(chapter?.purpose||''),selectedTopics:uniq(chapter?.selectedTopics),questions:list(chapter?.questions,5),queries:list(chapter?.queries,7)})).filter(chapter=>chapter.title);return{centralQuestion:plain(plan?.centralQuestion||fallback.centralQuestion),scopeSummary:plain(plan?.scopeSummary||fallback.scopeSummary),thesisAngles:list(plan?.thesisAngles,8),chapters:chapters.length?uniqueChapterIds(chapters):fallback.chapters};}
+export function buildFallbackResearchPlan({topic='Learning Topic',selectedItems=[],options={}}={}){const max=(DEPTH[options.depth]||DEPTH.Detailed).chapters,root=selectedItems[0]?.path?.[0]||topic,groups=new Map();for(const item of selectedItems){const path=Array.isArray(item.path)?item.path:[root,item.label];if(key(item.label)===key(root)&&path.length<=1)continue;const branch=path.length>1?path[1]:item.label;if(!groups.has(branch))groups.set(branch,[]);groups.get(branch).push(item.label);}let entries=[...groups.entries()];if(!entries.length)entries=[['Foundations and scope',[topic]],['Mechanisms and workflow',[topic]],['Tools and implementation',[topic]],['Tradeoffs, risks, and limitations',[topic]]];const chapters=entries.slice(0,max).map(([title,labels],index)=>({id:`chapter-${index+1}`,title:plain(title),purpose:`Explain ${title} as part of a coherent investigation of ${topic}, including mechanisms, tradeoffs, and practical implications.`,selectedTopics:uniq(labels),questions:[`What are the essential mechanisms and concepts in ${title}?`,`How is ${title} applied in practice?`,`What limitations, tradeoffs, and failure modes matter most?`],queries:uniq([`${topic} ${title} technical overview`,`${title} mechanisms workflow`,`${title} tools comparison limitations`,`${title} case study evidence`])}));return{centralQuestion:`What must be understood to evaluate and apply ${topic} rigorously?`,scopeSummary:`An integrated investigation of ${topic}, using the selected mind-map branches as scope rather than as a section checklist.`,thesisAngles:['mechanisms','workflow','tradeoffs','practical implications','limitations'],chapters};}
+export function getSelectionKind(item,selectedItems=[]){return selectedItems.some(candidate=>candidate!==item&&prefix(item.path,candidate.path))?'overview':'detail';}
 
-export function buildAnalyzeMessages({ topic, selectedItems, options = {}, researchPacks = [] }) {
-  const currentDate = new Date().toISOString().slice(0, 10);
-  const selectedWithRoles = selectedItems.map((item) => ({
-    ...item,
-    sectionKind: getSelectionKind(item, selectedItems)
-  }));
-  return [
-    {
-      role: 'system',
-      content: 'You are a precise research analyst. Return only strict JSON. Every prose field must contain plain text only: no HTML, XML, markdown, links, tags, or citations embedded in prose. Use only source IDs from the matching research pack. Never discuss rejected or irrelevant search results.'
-    },
-    {
-      role: 'user',
-      content: JSON.stringify({
-        task: 'Create a concise, useful, evidence-bound research brief for selected subjects in a recursive topic tree.',
-        currentDate,
-        topic,
-        selectedItems: selectedWithRoles,
-        options,
-        webResearch: researchPacks,
-        schema: {
-          title: 'Report title in the requested language',
-          summary: 'One concise plain-text paragraph describing the useful findings and evidence coverage',
-          sections: [
-            {
-              title: 'Selected topic label',
-              path: ['Root', 'Branch', 'Selected topic'],
-              simpleDefinition: 'Plain-text definition in 1 to 2 sentences',
-              currentDetails: ['Zero to three plain-text evidence-backed paragraphs'],
-              researchOverview: ['One to four plain-text explanatory paragraphs without repetition'],
-              keyTakeaways: ['Two to six non-redundant takeaways'],
-              examples: ['Zero to three concrete examples supported by the matching sources'],
-              sourceIds: ['Only IDs from the matching webResearch pack'],
-              coverageNote: 'One short sentence only when coverage is partial or insufficient'
-            }
-          ]
-        },
-        requirements: [
-          'Create exactly one section per selected item and preserve item order.',
-          'Preserve each selected item path exactly.',
-          'Use only source IDs from the matching webResearch pack; never invent or copy URLs.',
-          'Definitions may use stable domain knowledge, but current claims and examples must be supported by the selected source IDs.',
-          'When coverage is insufficient, keep the section short: provide a definition, one useful overview paragraph, one coverageNote, and at most two takeaways. Do not repeat the lack of sources in multiple fields.',
-          'When an item has sectionKind overview, introduce the branch briefly and leave detailed methods to its selected descendants.',
-          'Do not repeat the same explanation, caveat, source note, or example across parent and child sections.',
-          'Do not mention off-topic search results, failed queries, internal webResearch arrays, or the phrase supplied snippets.',
-          'Prefer specific mechanisms, workflows, limitations, tradeoffs, and concrete examples over generic framing.',
-          'Use the requested language for all prose.',
-          'Adapt detail to the requested audience and depth, but do not pad to a word count.',
-          'Do not include learning paths, exercises, study instructions, or next learning steps.',
-          'Return complete JSON that can be parsed directly with JSON.parse.',
-          'Return JSON object exactly with title, summary, and sections.'
-        ]
-      })
-    }
-  ];
-}
-
-export async function exploreWithMiniMax(payload, options) {
-  const result = await callMiniMaxJson({ messages: buildExploreMessages(payload), temperature: 0.25, maxTokens: 2500 }, options);
-  if (!Array.isArray(result.subjects)) throw new Error('MiniMax explore response did not include a subjects array.');
-  return result;
-}
-
-export async function analyzeWithMiniMax(payload, options = {}) {
-  const researchProvider = options.researchProvider || collectResearchPacks;
-  const researchPacks = await researchProvider(payload, options).catch(() => []);
-  const enrichedPayload = { ...payload, researchPacks };
-  const baseMessages = buildAnalyzeMessages(enrichedPayload);
-  let result;
-
-  try {
-    result = await callMiniMaxJson({ messages: baseMessages, temperature: 0.2, maxTokens: 12000 }, options);
-  } catch (error) {
-    if (!/valid JSON|Unexpected token/i.test(error.message || '')) throw error;
-    return buildFallbackAnalysis(enrichedPayload);
-  }
-
-  let validation = validateAnalysisResult(result, enrichedPayload);
-  if (!validation.valid) {
-    try {
-      const repairMessages = [
-        ...baseMessages,
-        { role: 'assistant', content: JSON.stringify(result) },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            task: 'Repair the previous JSON response.',
-            validationErrors: validation.errors,
-            requirements: [
-              'Return the complete corrected JSON object only.',
-              'Keep every path exact and every prose field plain text.',
-              'Remove unknown source IDs and HTML or markdown.',
-              'Do not add unsupported claims.'
-            ]
-          })
-        }
-      ];
-      result = await callMiniMaxJson({ messages: repairMessages, temperature: 0.1, maxTokens: 12000 }, options);
-      validation = validateAnalysisResult(result, enrichedPayload);
-    } catch {
-      return buildFallbackAnalysis(enrichedPayload);
-    }
-  }
-
-  if (!validation.valid) return buildFallbackAnalysis(enrichedPayload);
-  return normalizeAnalysisResult(result, enrichedPayload);
-}
-
-export function validateAnalysisResult(result, { selectedItems = [], researchPacks = [] } = {}) {
-  const errors = [];
-  if (!result || typeof result !== 'object') return { valid: false, errors: ['Response must be an object.'] };
-  if (!Array.isArray(result.sections)) errors.push('sections must be an array.');
-  if (containsMarkup(result.title) || containsMarkup(result.summary)) errors.push('Title and summary must be plain text.');
-  if (!Array.isArray(result.sections)) return { valid: false, errors };
-  if (result.sections.length !== selectedItems.length) errors.push(`Expected ${selectedItems.length} sections, received ${result.sections.length}.`);
-
-  selectedItems.forEach((item, index) => {
-    const section = result.sections[index];
-    if (!section) return;
-    if (normalizeKey(section.title) !== normalizeKey(item.label)) errors.push(`Section ${index + 1} title does not match ${item.label}.`);
-    if (!samePath(section.path, item.path)) errors.push(`Section ${item.label} path was changed.`);
-    const proseValues = [section.simpleDefinition, section.coverageNote, ...asArray(section.currentDetails), ...asArray(section.researchOverview), ...asArray(section.keyTakeaways), ...asArray(section.examples)];
-    if (proseValues.some(containsMarkup)) errors.push(`Section ${item.label} contains HTML or markdown-like markup.`);
-
-    const pack = findResearchPack(item, researchPacks);
-    const allowedIds = new Set((pack?.sources || []).map((source) => source.id));
-    const sourceIds = asArray(section.sourceIds).map(String);
-    for (const id of sourceIds) {
-      if (!allowedIds.has(id)) errors.push(`Section ${item.label} contains unknown source ID ${id}.`);
-    }
-    if ((pack?.coverage === 'good' || pack?.coverage === 'partial') && sourceIds.length === 0) {
-      errors.push(`Section ${item.label} must cite at least one matching source ID.`);
-    }
-    if (pack?.coverage === 'insufficient' && sourceIds.length > 0) {
-      errors.push(`Section ${item.label} cannot cite sources when coverage is insufficient.`);
-    }
-  });
-
-  return { valid: errors.length === 0, errors };
-}
-
-export function normalizeAnalysisResult(result, { topic = 'Learning Topic', selectedItems = [], researchPacks = [] } = {}) {
-  const sections = selectedItems.map((item, index) => {
-    const raw = result.sections?.[index] || {};
-    const pack = findResearchPack(item, researchPacks) || { coverage: 'insufficient', confidence: 0, sources: [] };
-    const allowed = new Map((pack.sources || []).map((source) => [source.id, source]));
-    const sourceIds = uniqueStrings(raw.sourceIds).filter((id) => allowed.has(id));
-    return {
-      title: cleanPlainText(raw.title || item.label),
-      path: item.path,
-      sectionKind: getSelectionKind(item, selectedItems),
-      simpleDefinition: cleanPlainText(raw.simpleDefinition || `${item.label} is a topic within ${item.path?.slice(0, -1).join(' > ') || topic}.`),
-      currentDetails: cleanParagraphs(raw.currentDetails),
-      researchOverview: cleanParagraphs(raw.researchOverview),
-      keyTakeaways: cleanList(raw.keyTakeaways, pack.coverage === 'insufficient' ? 2 : 6),
-      examples: cleanList(raw.examples, 3),
-      sourceIds,
-      sources: sourceIds.map((id) => allowed.get(id)),
-      coverage: pack.coverage || 'insufficient',
-      confidence: Number(pack.confidence || 0),
-      coverageNote: cleanPlainText(raw.coverageNote || defaultCoverageNote(pack.coverage))
-    };
-  });
-  return {
-    title: cleanPlainText(result.title || `${topic} Research Brief`),
-    summary: cleanPlainText(result.summary || 'Source-grounded research generated from the selected topics.'),
-    sections
-  };
-}
-
-function buildFallbackAnalysis({ topic = 'Learning Topic', selectedItems = [], options = {}, researchPacks = [] }) {
-  const depth = options.depth || 'Detailed';
-  const audience = options.audience || 'Intermediate';
-  return {
-    title: `${topic} Research Brief`,
-    summary: `A ${depth.toLowerCase()} research brief for ${audience.toLowerCase()} readers. Sections with insufficient direct evidence are kept concise rather than padded with unrelated material.`,
-    sections: selectedItems.map((item) => {
-      const pack = findResearchPack(item, researchPacks) || { coverage: 'insufficient', confidence: 0, sources: [] };
-      const sources = pack.sources || [];
-      const sourceIds = sources.slice(0, 4).map((source) => source.id);
-      const notes = sources.slice(0, 3).map((source) => cleanPlainText(source.note)).filter(Boolean);
-      const insufficient = pack.coverage === 'insufficient' || notes.length === 0;
-      return {
-        title: item.label,
-        path: item.path,
-        sectionKind: getSelectionKind(item, selectedItems),
-        simpleDefinition: `${item.label} is a topic within ${item.path?.slice(0, -1).join(' > ') || topic}.`,
-        currentDetails: insufficient ? [] : notes.slice(0, 2),
-        researchOverview: insufficient
-          ? [`No directly relevant sources passed LearnFlow's relevance checks for this topic, so the report does not manufacture a detailed factual section.`]
-          : [`The strongest retrieved evidence for ${item.label} is summarized above. Use the cited sources for the full context and limitations.`],
-        keyTakeaways: insufficient
-          ? ['Coverage is insufficient for a detailed source-grounded treatment.']
-          : notes.slice(0, 4),
-        examples: [],
-        sourceIds: insufficient ? [] : sourceIds,
-        sources: insufficient ? [] : sources.filter((source) => sourceIds.includes(source.id)),
-        coverage: insufficient ? 'insufficient' : pack.coverage,
-        confidence: Number(pack.confidence || 0),
-        coverageNote: defaultCoverageNote(insufficient ? 'insufficient' : pack.coverage)
-      };
-    })
-  };
-}
-
-export function getSelectionKind(item, selectedItems = []) {
-  const path = Array.isArray(item?.path) ? item.path : [];
-  const hasSelectedDescendant = selectedItems.some((candidate) => {
-    const candidatePath = Array.isArray(candidate?.path) ? candidate.path : [];
-    return candidatePath.length > path.length && path.every((part, index) => normalizeKey(part) === normalizeKey(candidatePath[index]));
-  });
-  return hasSelectedDescendant ? 'overview' : 'detail';
-}
-
-function findResearchPack(item, packs) {
-  const key = researchKey(item);
-  return packs.find((pack) => researchKey(pack) === key);
-}
-
-function researchKey(value) {
-  const label = normalizeKey(value?.title || value?.label || '');
-  const path = Array.isArray(value?.path) ? value.path.map(normalizeKey).join(' > ') : '';
-  return `${label}|${path}`;
-}
-
-function samePath(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-  return a.every((part, index) => normalizeKey(part) === normalizeKey(b[index]));
-}
-
-function normalizeKey(value) {
-  return cleanPlainText(value).toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function cleanParagraphs(value) {
-  const values = asArray(value).flatMap((entry) => splitParagraphs(entry));
-  return [...new Set(values.map(cleanPlainText).filter(Boolean))].slice(0, 4);
-}
-
-function cleanList(value, maxItems) {
-  return [...new Set(asArray(value).map(cleanPlainText).filter(Boolean))].slice(0, maxItems);
-}
-
-function uniqueStrings(value) {
-  return [...new Set(asArray(value).map((item) => String(item || '').trim()).filter(Boolean))];
-}
-
-function splitParagraphs(value) {
-  const decoded = decodeEntities(String(value || ''))
-    .replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<\/p\s*>/gi, '\n\n')
-    .replace(/<p(?:\s[^>]*)?>/gi, '');
-  return decoded.split(/\n\s*\n+/).filter(Boolean);
-}
-
-function cleanPlainText(value) {
-  return decodeEntities(String(value || ''))
-    .replace(/<br\s*\/?\s*>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/[`*_#]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function containsMarkup(value) {
-  return /<\/?[a-z][^>]*>|&lt;\/?[a-z]|```|\[[^\]]+\]\([^\)]+\)/i.test(String(value || ''));
-}
-
-function decodeEntities(value) {
-  return String(value || '')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#0?39;/gi, "'")
-    .replace(/&amp;/gi, '&');
-}
-
-function defaultCoverageNote(coverage) {
-  if (coverage === 'partial') return 'Evidence coverage is partial; conclusions are limited to the directly relevant sources listed below.';
-  if (coverage === 'insufficient') return 'Direct evidence was insufficient, so this section is intentionally concise.';
-  return '';
-}
-
-function asArray(value) {
-  if (Array.isArray(value)) return value;
-  if (value === undefined || value === null || value === '') return [];
-  return [value];
-}
+function normalizeResearch(value,plan){if(Array.isArray(value))return{overview:{sources:[]},chapters:plan.chapters.map((chapter,index)=>({id:chapter.id,title:chapter.title,sources:value[index]?.sources||[],coverage:value[index]?.coverage||'insufficient',confidence:value[index]?.confidence||0}))};return{overview:value?.overview||{sources:[]},chapters:plan.chapters.map((chapter,index)=>({id:chapter.id,title:chapter.title,purpose:chapter.purpose,questions:chapter.questions,sources:value?.chapters?.[index]?.sources||[],coverage:value?.chapters?.[index]?.coverage||'insufficient',confidence:value?.chapters?.[index]?.confidence||0}))};}
+function normalizeChapter(result,{chapter,evidence}){const allowed=new Set((evidence.sources||[]).map(source=>source.id));return{id:chapter.id,title:chapter.title,thesis:plain(result.thesis||''),opening:paragraphs(result.opening),sections:arr(result.sections).map(section=>({heading:plain(section?.heading||''),paragraphs:paragraphs(section?.paragraphs),takeaways:list(section?.takeaways,5),sourceIds:uniq(section?.sourceIds).filter(sourceId=>allowed.has(sourceId))})).filter(section=>section.heading||section.paragraphs.length),comparisonTable:table(result.comparisonTable,allowed),practicalImplications:list(result.practicalImplications,10),limitations:list(result.limitations,10),sourceIds:uniq(result.sourceIds).filter(sourceId=>allowed.has(sourceId))};}
+function fallbackChapter(topic,chapter,evidence,options={}){const notes=(evidence.sources||[]).slice(0,6).map(source=>plain(source.note)).filter(Boolean),opening=[`${chapter.title} is a core part of understanding ${topic}. This chapter focuses on mechanisms, workflow, tradeoffs, and practical consequences.`,notes[0]||'The analysis uses established domain knowledge while avoiding unsupported current or quantitative claims.'],groups=notes.length?chunk(notes,2):[[]],sections=groups.slice(0,options.depth==='Quick'?2:4).map((group,index)=>({heading:['Mechanisms and operating model','Workflow and practical use','Tradeoffs and failure modes','Implications'][index],paragraphs:group.length?group:[`${chapter.title} should be evaluated by tracing inputs, transformations, outputs, dependencies, and assumptions.`,`Its value depends on fit with the environment, available tooling, observability, and the cost of false conclusions.`],takeaways:[],sourceIds:[]}));while(sections.length<(options.depth==='Quick'?1:2))sections.push({heading:'Practical implications',paragraphs:['The technique should be tied to a specific decision and validated with complementary observations.','Tool output is evidence to interpret, not a substitute for reasoning about the target system.'],takeaways:[],sourceIds:[]});return{id:chapter.id,title:chapter.title,thesis:`${chapter.title} is most useful as part of an integrated investigation rather than as an isolated technique.`,opening,sections,comparisonTable:null,practicalImplications:[`Define the decision ${chapter.title} must support before choosing methods or tools.`,'Combine complementary evidence and test assumptions against observed behavior.'],limitations:['Results depend on the quality and representativeness of evidence.','Stable conceptual knowledge should not be mistaken for current case-specific facts.'],sourceIds:[]};}
+function fallbackSynthesis(topic,plan,chapters){return{title:`${topic} Research Dossier`,subtitle:plan.centralQuestion,executiveSummary:[`This dossier treats ${topic} as one integrated investigation rather than disconnected topic summaries.`,`The selected mind-map branches define scope, while the chapters explain mechanisms, workflow, tradeoffs, and implications in a coherent sequence.`],keyFindings:chapters.slice(0,8).map(chapter=>({title:chapter.title,explanation:chapter.thesis||chapter.opening?.[0]||''})),conclusion:[`${topic} should be evaluated through connected mechanisms and decisions, not isolated labels.`,'The strongest conclusions combine conceptual understanding, observed evidence, comparison, and explicit limits.'],recommendations:uniq(chapters.flatMap(chapter=>chapter.practicalImplications||[])).slice(0,10),openQuestions:uniq(chapters.flatMap(chapter=>chapter.limitations||[])).slice(0,8)};}
+function compactChapter(chapter){return{id:chapter.id,title:chapter.title,thesis:chapter.thesis,opening:arr(chapter.opening).slice(0,2),sectionSummaries:arr(chapter.sections).map(section=>({heading:section.heading,paragraphs:arr(section.paragraphs).slice(0,2),takeaways:arr(section.takeaways)})),practicalImplications:chapter.practicalImplications,limitations:chapter.limitations};}
+function clientChapter(chapter){return{id:id(chapter?.id||''),title:plain(chapter?.title||''),thesis:plain(chapter?.thesis||''),opening:paragraphs(chapter?.opening),sections:arr(chapter?.sections).map(section=>({heading:plain(section?.heading||''),paragraphs:paragraphs(section?.paragraphs),takeaways:list(section?.takeaways,6)})).filter(section=>section.heading||section.paragraphs.length),comparisonTable:table(chapter?.comparisonTable),practicalImplications:list(chapter?.practicalImplications,12),limitations:list(chapter?.limitations,12)};}
+function table(value,allowed=null){if(!value||typeof value!=='object')return null;const columns=list(value.columns,8),rows=arr(value.rows).map(row=>arr(row).map(plain).slice(0,columns.length)).filter(row=>row.length);if(columns.length<2||!rows.length)return null;return{title:plain(value.title||''),columns,rows,...(allowed?{sourceIds:uniq(value.sourceIds).filter(sourceId=>allowed.has(sourceId))}:{})};}
+function sourceIds(result){return uniq([...arr(result?.sourceIds),...arr(result?.sections).flatMap(section=>arr(section?.sourceIds)),...arr(result?.comparisonTable?.sourceIds)]);}
+function markup(value){const text=String(value||'');return /<\/?[a-z][^>]*>|&lt;\/?[a-z]|```|\[[^\]]+\]\([^)]*\)|https?:\/\//i.test(text);}
+const arr=value=>Array.isArray(value)?value:value==null?[]:[value];
+const paragraphs=value=>uniq(arr(value).flatMap(entry=>String(entry||'').replace(/<br\s*\/?\s*>/gi,'\n').replace(/<\/p>/gi,'\n\n').replace(/<[^>]*>/g,' ').split(/\n\s*\n+/).map(plain))).filter(Boolean);
+const list=(value,max=20)=>uniq(arr(value).map(plain)).filter(Boolean).slice(0,max);
+const plain=value=>String(value||'').replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/&quot;/gi,'"').replace(/&#0?39;/gi,"'").replace(/&amp;/gi,'&').replace(/<[^>]*>/g,' ').replace(/[`*_#]+/g,'').replace(/\s+/g,' ').trim();
+const key=value=>plain(value).toLowerCase().replace(/[^a-z0-9]+/g,'');
+const id=value=>plain(value).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')||'chapter';
+function uniq(values=[]){const seen=new Set(),out=[];for(const value of arr(values)){const text=String(value||'').trim(),normalized=text.toLowerCase();if(text&&!seen.has(normalized)){seen.add(normalized);out.push(text);}}return out;}
+function uniqueChapterIds(chapters){const seen=new Set();return chapters.map((chapter,index)=>{let chapterId=id(chapter.id||`chapter-${index+1}`),base=chapterId,suffix=2;while(seen.has(chapterId))chapterId=`${base}-${suffix++}`;seen.add(chapterId);return{...chapter,id:chapterId};});}
+const prefix=(parent=[],child=[])=>child.length>parent.length&&parent.every((value,index)=>key(value)===key(child[index]));
+const chunk=(values,size)=>Array.from({length:Math.ceil(values.length/size)},(_,index)=>values.slice(index*size,index*size+size));
+async function mapConcurrent(items,concurrency,mapper){if(!items.length)return[];const results=new Array(items.length);let next=0;const workers=Array.from({length:Math.min(Math.max(concurrency,1),items.length)},async()=>{while(next<items.length){const index=next++;results[index]=await mapper(items[index],index);}});await Promise.all(workers);return results;}
