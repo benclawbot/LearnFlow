@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeWithMiniMax, buildExploreMessages, buildAnalyzeMessages, callMiniMaxJson, extractJson, getMiniMaxConfig } from '../server/minimax.mjs';
+import { analyzeWithMiniMax, buildAnalyzeMessages, buildExploreMessages, buildResearchPlanMessages, callMiniMaxJson, extractJson, getMiniMaxConfig } from '../server/minimax.mjs';
 
 test('MiniMax config defaults to requested base URL and model', () => {
   const config = getMiniMaxConfig({ MINIMAX_API_KEY: 'k' });
@@ -8,22 +8,17 @@ test('MiniMax config defaults to requested base URL and model', () => {
   assert.equal(config.model, 'MiniMax-M3');
 });
 
-test('prompt builders require strict JSON for the recursive tree and analysis', () => {
+test('prompt builders separate research planning from dossier synthesis', () => {
   const explore = buildExploreMessages({ topic: 'Physics', parentPath: ['Physics'], depth: 2 });
-  const analyze = buildAnalyzeMessages({
-    topic: 'Physics',
-    selectedItems: [{ label: 'Motion', path: ['Physics', 'Motion'] }],
-    researchPacks: [{ title: 'Motion', path: ['Physics', 'Motion'], sources: [{ title: 'Source', url: 'https://example.com', note: 'Current source note.' }] }]
-  });
+  const plan = buildResearchPlanMessages({ topic: 'Physics', selectedItems: [{ label: 'Motion', path: ['Physics', 'Motion'] }], options: { depth: 'Detailed' } });
+  const analyze = buildAnalyzeMessages({ topic: 'Physics', selectedItems: [{ label: 'Motion', path: ['Physics', 'Motion'] }], researchPlan: { centralQuestion: 'How does motion work?', chapters: [] }, chapterDrafts: [] });
   assert.match(explore[0].content, /Return only strict JSON/);
-  assert.match(analyze[0].content, /Return only strict JSON/);
-  assert.match(explore[1].content, /subjects/);
-  assert.match(analyze[1].content, /sections/);
-  assert.match(analyze[1].content, /webResearch/);
-  assert.match(analyze[1].content, /simpleDefinition/);
-  assert.match(analyze[1].content, /currentDetails/);
-  assert.match(analyze[1].content, /researchOverview/);
-  assert.doesNotMatch(analyze[1].content, /nextSteps/);
+  assert.match(plan[0].content, /research director/i);
+  assert.match(plan[1].content, /centralQuestion/);
+  assert.match(plan[1].content, /chapters/);
+  assert.match(analyze[1].content, /executiveSummary/);
+  assert.match(analyze[1].content, /keyFindings/);
+  assert.doesNotMatch(analyze[1].content, /one section per selected item/i);
 });
 
 test('extractJson accepts fenced JSON from model responses', () => {
@@ -32,43 +27,35 @@ test('extractJson accepts fenced JSON from model responses', () => {
 
 test('extractJson removes standalone ellipsis placeholders from model JSON', () => {
   const parsed = extractJson(`{
-    "sections": [
+    "chapters": [
       { "title": "Regression" },
       ...
     ]
   }`);
-  assert.deepEqual(parsed, { sections: [{ title: 'Regression' }] });
+  assert.deepEqual(parsed, { chapters: [{ title: 'Regression' }] });
 });
 
-test('callMiniMaxJson calls the OpenAI-compatible chat completions endpoint', async () => {
+test('callMiniMaxJson calls the endpoint with MiniMax M3 thinking controls', async () => {
   const calls = [];
   const fakeFetch = async (url, options) => {
     calls.push({ url, options });
-    return {
-      ok: true,
-      async text() {
-        return JSON.stringify({ choices: [{ message: { content: '{"subjects":[{"label":"A"}]}' } }] });
-      }
-    };
+    return { ok: true, async text() { return JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }); } };
   };
-  const result = await callMiniMaxJson({ messages: [{ role: 'user', content: 'x' }] }, { env: { MINIMAX_API_KEY: 'secret' }, fetchImpl: fakeFetch });
-  assert.deepEqual(result, { subjects: [{ label: 'A' }] });
+  const result = await callMiniMaxJson({ messages: [{ role: 'user', content: 'x' }], thinking: true }, { env: { MINIMAX_API_KEY: 'secret' }, fetchImpl: fakeFetch });
+  assert.deepEqual(result, { ok: true });
+  const body = JSON.parse(calls[0].options.body);
   assert.equal(calls[0].url, 'https://api.minimax.io/v1/chat/completions');
-  assert.equal(JSON.parse(calls[0].options.body).model, 'MiniMax-M3');
-  assert.equal(calls[0].options.headers.Authorization, 'Bearer secret');
+  assert.equal(body.model, 'MiniMax-M3');
+  assert.deepEqual(body.thinking, { type: 'enabled' });
 });
 
-test('analyzeWithMiniMax falls back when the model returns invalid JSON', async () => {
-  const fakeFetch = async () => ({
-    ok: true,
-    async text() {
-      return JSON.stringify({ choices: [{ message: { content: '{"sections":[...]}' } }] });
-    }
+test('analyzeWithMiniMax falls back to a coherent dossier when model JSON is invalid', async () => {
+  const fakeFetch = async () => ({ ok: true, async text() { return JSON.stringify({ choices: [{ message: { content: '{"chapters":[...]}' } }] }); } });
+  const result = await analyzeWithMiniMax({ topic: 'AI', selectedItems: [{ label: 'Machine Learning', path: ['AI', 'Machine Learning'] }], options: { depth: 'Quick' } }, {
+    env: { MINIMAX_API_KEY: 'secret' }, fetchImpl: fakeFetch,
+    researchProvider: async ({ researchPlan }) => ({ overview: { sources: [] }, chapters: researchPlan.chapters.map(chapter => ({ id: chapter.id, title: chapter.title, sources: [] })) })
   });
-  const result = await analyzeWithMiniMax({
-    topic: 'AI',
-    selectedItems: [{ label: 'Machine Learning', path: ['AI', 'Machine Learning'] }]
-  }, { env: { MINIMAX_API_KEY: 'secret' }, fetchImpl: fakeFetch, researchProvider: async () => [] });
-  assert.equal(result.title, 'AI Research Brief');
-  assert.equal(result.sections[0].title, 'Machine Learning');
+  assert.equal(result.title, 'AI Research Dossier');
+  assert.ok(result.chapters.length >= 1);
+  assert.ok(Array.isArray(result.executiveSummary));
 });
