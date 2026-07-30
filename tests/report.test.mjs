@@ -31,8 +31,9 @@ test('createPrintableReportHtml includes table of contents and selected subject 
   assert.match(html, /Machine Learning/);
   assert.match(html, /Supervised Learning/);
   assert.match(html, /Simple definition/);
-  assert.match(html, /Current details/);
+  assert.match(html, /Evidence coverage/);
   assert.match(html, /Research overview/);
+  assert.doesNotMatch(html, /Current details/);
   assert.doesNotMatch(html, /Learning path/);
   assert.doesNotMatch(html, /Common traps/);
   assert.doesNotMatch(html, /Comprehensive Learning Analysis/);
